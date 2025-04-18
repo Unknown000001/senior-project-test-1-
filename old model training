@@ -1,0 +1,116 @@
+import os
+import numpy as np
+import librosa
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import EarlyStopping
+import tensorflow as tf
+
+
+DATA_PATH = "C:\\new coding folder\\ravdess"
+MODEL_OUTPUT_PATH = "model\\VoiceWhisperer.h5"
+N_MFCC = 40
+TEST_SIZE = 0.2
+EPOCHS = 50
+BATCH_SIZE = 32
+
+emotion_labels = {
+    1: "neutral", 2: "calm", 3: "happy", 4: "sad",
+    5: "angry", 6: "fearful", 7: "disgust", 8: "surprised"
+}
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def extract_features(file_path):
+    try:
+        audio, sr = librosa.load(file_path, sr=None)
+        if len(audio) < sr:
+            raise ValueError("Audio too short")
+        mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=N_MFCC)
+        return np.mean(mfcc.T, axis=0)
+    except Exception as e:
+        logger.warning(f"Feature extraction failed for {file_path}: {e}")
+        return None
+
+
+def process_file(file_path):
+    try:
+        parts = os.path.basename(file_path).split("-")
+        if len(parts) < 3:
+            return None
+        emotion = int(parts[2])
+        features = extract_features(file_path)
+        if features is not None:
+            return features, emotion - 1
+    except Exception as e:
+        logger.warning(f"Error processing file {file_path}: {e}")
+    return None
+
+def load_data_parallel(datapath):
+    logger.info(f"Scanning directory: {datapath}")
+    file_paths = [
+        os.path.join(root, file)
+        for root, _, files in os.walk(datapath)
+        for file in files if file.endswith(".wav")
+    ]
+
+    with ThreadPoolExecutor() as executor:
+        results = executor.map(process_file, file_paths)
+
+    X, y = [], []
+    for result in results:
+        if result:
+            features, label = result
+            X.append(features)
+            y.append(label)
+
+    logger.info(f"Total valid samples: {len(X)}")
+    return np.array(X), to_categorical(y)
+
+
+X, y = load_data_parallel(DATA_PATH)
+
+
+scaler = StandardScaler()
+X = scaler.fit_transform(X)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=TEST_SIZE, random_state=42)
+
+
+model = Sequential([
+    Dense(256, input_shape=(N_MFCC,), activation='relu'),
+    Dropout(0.4),
+    Dense(128, activation='relu'),
+    Dropout(0.3),
+    Dense(64, activation='relu'),
+    Dense(8, activation='softmax')
+])
+
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+
+
+model.fit(
+    X_train, y_train,
+    validation_data=(X_test, y_test),
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    callbacks=[early_stop]
+)
+
+os.makedirs(os.path.dirname(MODEL_OUTPUT_PATH), exist_ok=True)
+model.save(MODEL_OUTPUT_PATH)
+logger.info(f"Model saved to {MODEL_OUTPUT_PATH}")
+from datetime import datetime
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+model.save(f"model/emotion_model_{timestamp}.h5")
+
