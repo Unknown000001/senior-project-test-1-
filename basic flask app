@@ -1,0 +1,50 @@
+from flask import Flask, request
+import os
+import numpy as np
+import librosa
+import tensorflow as tf
+from werkzeug.utils import secure_filename
+
+app = Flask(__name__)
+app.config["UPLOAD_FOLDER"] = "static/uploads"
+os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+print("Current working dir:", os.getcwd())
+print("Model full path:","model//VoiceWhisperer.h5")
+
+model = tf.keras.models.load_model("model//VoiceWhisperer.h5")
+
+emotion_labels = [
+    "neutral", "calm", "happy", "sad", "angry", "fearful", "disgust", "surprised"
+]
+
+def extract_features(file_path):
+    audio, sr = librosa.load(file_path, sr=None)
+    mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=40)
+    return np.mean(mfcc.T, axis=0)
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if request.method == "POST":
+        file = request.files.get("audio")
+        if not file:
+            return "No file uploaded"
+        filename = secure_filename(file.filename)
+        path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        file.save(path)
+        try:
+            features = extract_features(path).reshape(1, -1)
+            prediction = model.predict(features)
+            emotion = emotion_labels[np.argmax(prediction)]
+            return f"Predicted Emotion: {emotion}"
+        except Exception as e:
+            return f"Prediction failed: {e}"
+    return '''
+        <h1>Upload Audio for Emotion Detection</h1>
+        <form method="post" enctype="multipart/form-data">
+            <input type="file" name="audio">
+            <input type="submit">
+        </form>
+    '''
+
+if __name__ == "__main__":
+    app.run(debug=True)
