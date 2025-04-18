@@ -1,0 +1,23 @@
+import sqlite3
+ ###rewatch video go through actually connect 
+def init_db():
+    conn = sqlite3.connect("emotion_app.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT,
+            emotion TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def log_prediction(filename, emotion):
+    conn = sqlite3.connect("emotion_app.db")
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO predictions (filename, emotion) VALUES (?, ?)", (filename, emotion))
+    conn.commit()
+    conn.close()
+
+init_db()
